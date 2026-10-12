@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Build output
+build/
+dist/
+
+# OS
+.DS_Store
+
+# Editors
+.idea/
+
+# Claude Code
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
