@@ -114,3 +114,14 @@ A Windows adapter exists but has not been run on real Windows. Build on Windows 
 `powershell -ExecutionPolicy Bypass -File build_windows.ps1`, or run the `windows-build` GitHub
 Actions workflow and download the zip. The result is unsigned, so SmartScreen will warn.
 Known gaps: no image thumbnails, moves need NTFS (hard links), and system folders are blocked from cleanup.
+
+### Organise inside a folder
+
+Choose **Tidy Downloads** to preview loose files grouped into Images, Videos,
+Documents, Audio, Archives and other type folders inside Downloads. Existing
+folders stay intact. Select **View grouped by type** to browse without moving
+anything, or **Move to another location** to choose a separate destination.
+In-folder and view-only modes require one source and do not recurse. Unknown
+file types go into Other; protected files remain blocked. Moves still require
+review and confirmation, never overwrite, and use the existing History/undo.
+Saved rules currently support only the separate-destination mode.

@@ -40,6 +40,67 @@ class Base(unittest.TestCase):
 
 
 class RuleTests(Base):
+    def test_in_place_groups_loose_files_and_reuses_folders(self):
+        self.put('clip.mp4')
+        self.put('photo.png')
+        self.put('unknown.xyz')
+        (self.src / 'Images').mkdir()
+        self.put('already.png', folder=self.src / 'Images')
+        plan = build_plan([str(self.src)], str(self.src), 'by_type', mode='inside')
+        targets = {Path(r['dst']).relative_to(self.src).as_posix() for r in plan['rows']}
+        self.assertEqual(targets, {'Videos/clip.mp4', 'Images/photo.png', 'Other/unknown.xyz'})
+        self.assertFalse((self.src / 'Videos').exists())
+        journal = Journal(str(self.root / 'inside.sqlite3'))
+        mover = Mover(journal)
+        result = mover.apply(plan, {i: 'move' for i in range(len(plan['rows']))})
+        self.assertEqual(result['done'], 3)
+        self.assertEqual(build_plan([str(self.src)], str(self.src), 'by_type', mode='inside')['rows'], [])
+        self.assertTrue((self.src / 'Images' / 'already.png').exists())
+
+    def test_inside_conflicts_symlinks_and_protected_unknowns(self):
+        self.put('photo.png')
+        (self.src / 'Images').mkdir()
+        self.put('photo.png', b'existing', self.src / 'Images')
+        self.put('cert.pem')
+        (self.src / 'alias.png').symlink_to(self.src / 'photo.png')
+        plan = build_plan([str(self.src)], str(self.src), 'by_type', mode='inside')
+        photo = next(r for r in plan['rows'] if r['src'].endswith('photo.png'))
+        self.assertTrue(photo['warnings'])
+        self.assertFalse(any(r['src'].endswith('alias.png') for r in plan['rows']))
+        cert = next(r for r in plan['rows'] if r['src'].endswith('cert.pem'))
+        self.assertEqual((cert['status'], cert['selected']), ('blocked', False))
+
+    def test_api_never_registers_view_only_plan_for_moves(self):
+        from unittest.mock import patch
+        from app import Api
+        self.put('photo.png')
+        api = Api()
+        api._allowed.add(str(self.src))
+        with patch('app.scan_presentations', return_value={'refs': {}, 'checked': 0, 'unreadable': [], 'folders': []}):
+            plan = api.organise_preview([str(self.src)], '', 'by_type', mode='view')
+        with self.assertRaises(ValueError):
+            api.organise_apply(plan['id'], {'0': 'move'})
+        self.assertTrue((self.src / 'photo.png').exists())
+        api._watcher.shutdown()
+
+    def test_view_plan_selects_nothing_and_has_distinct_id(self):
+        self.put('photo.png')
+        view = build_plan([str(self.src)], str(self.src), 'by_type', mode='view')
+        move = build_plan([str(self.src)], str(self.src), 'by_type', mode='inside')
+        self.assertFalse(any(r['selected'] for r in view['rows']))
+        self.assertNotEqual(view['id'], move['id'])
+        self.assertEqual(list(self.src.iterdir()), [self.src / 'photo.png'])
+
+    def test_in_place_single_type_gets_category_folder(self):
+        self.put('clip.mp4')
+        plan = build_plan([str(self.src)], str(self.src), 'videos', mode='inside')
+        self.assertEqual(Path(plan['rows'][0]['dst']), self.src / 'Videos' / 'clip.mp4')
+
+    def test_inside_rejects_recursion_and_multiple_sources(self):
+        for sources, recursive in [([str(self.src)], True), ([str(self.src), str(self.dst)], False)]:
+            with self.assertRaises(ValueError):
+                build_plan(sources, str(self.src), 'by_type', recursive=recursive, mode='inside')
+
     def test_png_alone_is_not_a_screenshot(self):
         self.assertIsNone(match_rule('photo.png', 'screenshots'))
         self.assertIsNotNone(match_rule('Screenshot 2026-10-11 at 17.46.11.png', 'screenshots'))

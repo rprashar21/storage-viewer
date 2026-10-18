@@ -23,6 +23,11 @@ for n in ('dup1.bin', 'dup2.bin'):
 (root / 'proj' / 'package.json').write_text('{}')
 (root / 'proj' / 'node_modules' / 'm.js').write_bytes(b'm' * 4000)
 
+# Keep dependency scanning inside the test fixture, away from personal folders.
+import app as app_module
+from refs import scan_presentations as real_scan_presentations
+app_module.scan_presentations = lambda folders: real_scan_presentations(
+    [folder for folder in folders if Path(folder).is_relative_to(root)])
 api = Api()
 api._allowed.add(str(root))
 trashed = []
@@ -131,11 +136,21 @@ def run():
         js(f"document.getElementById('oSrcDesktop').checked=false;document.getElementById('oSrcDownloads').checked=false;oSources=[{json.dumps(str(org / 'src'))}];oDest={json.dumps(str(org / 'dest'))};document.getElementById('oPreset').value='images'")
         js("oPreview()")
         layout('organise tab')
-        check('organise preview rows', wait("document.querySelectorAll('#oRows tr').length===2"))
+        check('organise preview rows', wait("document.querySelectorAll('#oRows tr').length===2"), js("document.getElementById('oStatus').textContent"))
         check('thumbnail shown for image row', wait("document.querySelectorAll('#oRows img').length>=1"))
         check('linked image skipped by default', wait("document.getElementById('oBarText').textContent==='1 to move, 0 to copy'"))
         check('presentation wording shown', 'checked presentation' in js("document.getElementById('oNote').textContent"))
         check('preview moved nothing', (org / 'src' / 'linked.png').exists() and (org / 'src' / 'Screenshot 2026-01-02 at 10.00.00.png').exists())
+        check('source paths visible', js("document.querySelectorAll('#oRows .source').length===2"))
+        js("[...document.querySelectorAll('#oGroups button')].find(b=>b.textContent.startsWith('Needs attention')).click()")
+        check('attention filter shows linked file', js("document.querySelectorAll('#oRows tr').length===1 && document.getElementById('oRows').textContent.includes('linked.png')"))
+        check('filter preserves selection', js("oSel.size===1"))
+        js("document.querySelector('#oGroups button').click()")
+        for width in (760, 1600):
+            window.resize(width, 760)
+            time.sleep(0.3)
+            layout(f'organise at {width}px')
+        window.resize(1080, 760)
         js("document.getElementById('oApply').click()")
         check('organise confirmation shown', wait("!document.getElementById('oConfirm').hidden && document.getElementById('oConfirm').textContent.includes('Move 1')"))
         check('still nothing moved before confirm', (org / 'src' / 'Screenshot 2026-01-02 at 10.00.00.png').exists())
@@ -155,6 +170,23 @@ def run():
         check('watcher starts after confirm', wait("document.getElementById('wList').textContent.includes('Shots')"), js("document.getElementById('oStatus').textContent"))
         js("document.getElementById('wPause').click()")
         check('watcher can be paused', wait("document.getElementById('wList').textContent.includes('paused')"))
+        js("document.getElementById('oMode').value='view';oModeChanged();document.getElementById('oPreset').value='by_type';oPreview()")
+        check('view mode groups files without move action', wait("oPlan?.mode==='view' && document.getElementById('oApply').disabled && oSel.size===0"))
+        check('view mode leaves files in place', (org / 'src' / 'linked.png').exists())
+        js("document.getElementById('oMode').value='inside';oModeChanged();oPreview()")
+        check('inside preview uses source category folder', wait("oPlan?.mode==='inside' && oPlan.rows.some(r=>r.dst.includes('/src/Images/'))"))
+        check('inside preview creates no folders', not (org / 'src' / 'Images').exists())
+        js("document.getElementById('oApply').click();document.getElementById('oConfirm').querySelector('button.primary').click()")
+        check('inside move creates category folder', wait("document.getElementById('oConfirm').textContent.startsWith('Done:')") and (org / 'src' / 'Images' / 'Screenshot 2026-01-02 at 10.00.00.png').exists())
+        check('inside move keeps linked file', (org / 'src' / 'linked.png').exists())
+        js("document.getElementById('oTidyDownloads').click()")
+        check('tidy Downloads defaults to inside by type', js("document.getElementById('oMode').value==='inside' && document.getElementById('oPreset').value==='by_type' && !document.getElementById('oRec').checked && document.getElementById('oSrcDownloads').checked && !document.getElementById('oSrcDesktop').checked"))
+        js("oPlan={id:'fixture',dest:'/dest',blocked:0,linked:0,rows:Array.from({length:125},(_,i)=>({src:'/src/file'+i+'.txt',dst:'/dest/Documents/file'+i+'.txt',status:'ready',warnings:[],referenced_by:[],selected:true,op:'move',reason:'Document',bytes:1}))};oRender()")
+        check('large preview renders only 60 rows', js("document.querySelectorAll('#oRows tr').length===60 && oSel.size===125"))
+        js("document.querySelector('#oRows input').click();document.getElementById('oNextPage').click()")
+        check('page change preserves deselection', js("oSel.size===124 && !oSel.has(0) && document.getElementById('oRows').textContent.includes('file60.txt')"))
+        js("document.getElementById('oPrevPage').click()")
+        check('returning page restores checkbox state', js("!document.querySelector('#oRows input').checked"))
         api._watcher.shutdown()
         check('other copy remains', sum((root / n).exists() for n in ('dup1.bin', 'dup2.bin')) == 2)  # fake trash did not move it
     finally:

@@ -76,31 +76,41 @@ def _nearest_dev(path):
     return os.stat(p).st_dev
 
 
-def build_plan(sources, dest, preset, group_by='none', recursive=False, conflict='rename', ref_index=None):
+def build_plan(sources, dest, preset, group_by='none', recursive=False, conflict='rename', ref_index=None, mode='elsewhere'):
     if preset not in PRESETS or group_by not in GROUPS or conflict not in ('rename', 'skip'):
         raise ValueError('Unknown option')
+    if mode not in ('elsewhere', 'inside', 'view'):
+        raise ValueError('Unknown organisation mode')
+    local = mode in ('inside', 'view')
+    if local:
+        if len(sources) != 1 or recursive:
+            raise ValueError('Choose one source folder and turn off Include subfolders.')
+        dest = sources[0]
     dest = os.path.normpath(dest)
     dest_dev = _nearest_dev(dest)
     refs = (ref_index or {}).get('refs', {})
     rows, claimed = [], set()
     for source in sources:
         source = os.path.normpath(source)
-        if source == dest:
+        if source == dest and not local:
             raise ValueError('Destination cannot be a source folder')
         for path, info in _walk(source, dest, recursive):
             if len(rows) >= MAX_ROWS:
                 break
-            if path.startswith(dest + os.sep):
+            if not local and path.startswith(dest + os.sep):
                 continue
             hit = match_rule(os.path.basename(path), preset)
+            if not hit and local and preset == 'by_type':
+                hit = ('Other', 'Unrecognised file type')
             if not hit:
                 continue
             category, reason = hit
-            target_dir = _dest_dir(dest, category, preset, group_by, info.st_mtime)
+            folder_category = 'Videos' if local and category == 'Video' else category
+            target_dir = _dest_dir(dest, folder_category, 'by_type' if local else preset, group_by, info.st_mtime)
             target = os.path.join(target_dir, os.path.basename(path))
             row = {'src': path, 'dst': target, 'category': category, 'rule': preset, 'reason': reason,
                    'bytes': info.st_size, 'mtime': info.st_mtime, 'status': 'ready', 'warnings': [],
-                   'selected': True, 'op': 'move', 'referenced_by': [], 'conflict': conflict}
+                   'selected': mode != 'view', 'op': 'move', 'referenced_by': [], 'conflict': conflict}
             blocked = protected_reason(path)
             if blocked:
                 row.update(status='blocked', selected=False, warnings=[blocked])
@@ -117,10 +127,10 @@ def build_plan(sources, dest, preset, group_by='none', recursive=False, conflict
             rows.append(row)
     rows.sort(key=lambda r: (r['src'].casefold()))
     digest = hashlib.sha256()
-    digest.update(f'{RULE_VERSION}|{preset}|{group_by}|{recursive}|{conflict}|{dest}'.encode())
+    digest.update(f'{RULE_VERSION}|{mode}|{preset}|{group_by}|{recursive}|{conflict}|{dest}'.encode())
     for r in rows:
         digest.update(f"|{r['src']}|{r['dst']}|{r['bytes']}|{int(r['mtime'])}|{r['status']}".encode())
-    return {'id': digest.hexdigest()[:16], 'rule_version': RULE_VERSION, 'preset': preset, 'group_by': group_by,
+    return {'id': digest.hexdigest()[:16], 'rule_version': RULE_VERSION, 'mode': mode, 'preset': preset, 'group_by': group_by,
             'recursive': recursive, 'conflict': conflict, 'dest': dest, 'sources': list(sources), 'rows': rows,
             'ready': sum(r['status'] == 'ready' for r in rows), 'blocked': sum(r['status'] == 'blocked' for r in rows),
             'linked': sum(bool(r['referenced_by']) for r in rows),

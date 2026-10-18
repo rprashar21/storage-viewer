@@ -94,18 +94,19 @@ class Api:
             raise ValueError('Choose this folder with the folder picker first.')
         return p
 
-    def organise_preview(self, sources, dest, preset, group_by='none', recursive=False, conflict='rename'):
+    def organise_preview(self, sources, dest, preset, group_by='none', recursive=False, conflict='rename', mode='elsewhere'):
         srcs = [self._ok_folder(s) for s in sources]
-        dest = self._ok_folder(dest)
+        dest = self._ok_folder(dest) if mode == 'elsewhere' else (srcs[0] if srcs else '')
         for s in srcs:
             if not Path(s).is_dir():
                 raise ValueError('Folder no longer exists: ' + s)
         std = get_adapter().standard_folders()
         folders = list(dict.fromkeys(srcs + [std[d] for d in ('Documents', 'Desktop', 'Downloads')]))
         index = scan_presentations([f for f in folders if Path(f).is_dir()])
-        plan = build_plan(srcs, dest, preset, group_by, bool(recursive), conflict, index)
+        plan = build_plan(srcs, dest, preset, group_by, bool(recursive), conflict, index, mode=mode)
         plan['presentation_note'] = wording(index)
-        self._org_plans[plan['id']] = plan
+        if mode != 'view':
+            self._org_plans[plan['id']] = plan
         with self._lock:
             self._allowed.add(dest)
         return plan
